@@ -6,38 +6,40 @@
 
 ```
 temp-control-system/
-├── common/             # 公共模块 (两个工程共用)
+├── common/                  # 公共模块 (两个工程共用)
 │   ├── inc/
-│   │   ├── protocol.h      # 通信帧协议
-│   │   ├── sx1278.h        # SX1278 LoRa 驱动头文件
-│   │   └── sx1278_regs.h   # SX1278 寄存器定义
+│   │   ├── protocol.h       # 通信帧协议
+│   │   ├── sx1278.h         # SX1278 LoRa 驱动头文件
+│   │   └── sx1278_regs.h    # SX1278 寄存器定义
 │   └── src/
-│       ├── protocol.c      # 通信帧协议实现
-│       └── sx1278.c        # SX1278 LoRa 驱动实现
-├── slave/              # 设备房从机工程
+│       ├── protocol.c       # 通信帧协议实现
+│       └── sx1278.c         # SX1278 LoRa 驱动实现
+├── slave/                   # 设备房从机工程
 │   ├── inc/
-│   │   ├── ds18b20.h       # DS18B20 温度传感器
-│   │   ├── dht22.h         # DHT22 温湿度传感器
-│   │   ├── relay.h         # 继电器控制
-│   │   └── app_slave.h     # 从机应用层
+│   │   ├── ds18b20.h        # DS18B20 温度传感器
+│   │   ├── dht22.h          # DHT22 温湿度传感器
+│   │   ├── relay.h          # 继电器控制
+│   │   └── app_slave.h      # 从机应用层
 │   └── src/
-│       ├── main.c          # 从机主入口
-│       ├── ds18b20.c       # DS18B20 驱动实现
-│       ├── dht22.c         # DHT22 驱动实现
-│       ├── relay.c         # 继电器驱动实现
-│       └── app_slave.c     # 从机应用逻辑
-├── master/             # 值班室主机工程
+│       ├── main.c           # 从机主入口
+│       ├── ds18b20.c        # DS18B20 驱动实现
+│       ├── dht22.c          # DHT22 驱动实现
+│       ├── relay.c          # 继电器驱动实现
+│       └── app_slave.c      # 从机应用逻辑
+├── master/                  # 值班室主机工程
 │   ├── inc/
-│   │   ├── hub75.h         # HUB75 点阵屏驱动
-│   │   ├── key.h           # 按键驱动
-│   │   ├── font.h          # 5x7 ASCII 字体
-│   │   └── app_master.h    # 主机应用层
+│   │   ├── hub12.h          # HUB12 点阵屏驱动 (P10 单色屏)
+│   │   ├── key.h            # 按键驱动
+│   │   ├── font.h           # 5x7 ASCII 字体
+│   │   └── app_master.h     # 主机应用层
 │   └── src/
-│       ├── main.c          # 主机主入口
-│       ├── hub75.c         # HUB75 驱动实现
-│       ├── key.c           # 按键驱动实现
-│       └── app_master.c    # 主机应用逻辑
-└── README.md
+│       ├── main.c           # 主机主入口
+│       ├── hub12.c          # HUB12 驱动实现
+│       ├── key.c            # 按键驱动实现
+│       └── app_master.c     # 主机应用逻辑
+├── README.md                # 项目说明
+├── 项目技术文档.md           # 详细技术文档
+└── 调试与测试指南.md         # 调试与测试流程
 ```
 
 ## 硬件配置
@@ -56,7 +58,7 @@ temp-control-system/
 |------|------|------|
 | PA4~PA7 | LoRa SPI1 | 与从机相同 |
 | PB0  | LoRa DIO0 | 中断输入 |
-| PB3~PB8 | HUB75 点阵屏 | A/B/CLK/LAT/OE/DATA |
+| PB3~PB8 | HUB12 点阵屏 | A/B/CLK/STB/OE/R1 |
 | PC13 | KEY1 | 手动开/关风扇 |
 | PA8  | KEY2 | 切换自动/手动 |
 | PB11 | KEY3 | 阈值 +1°C |
