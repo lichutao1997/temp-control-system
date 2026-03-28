@@ -242,36 +242,39 @@ static void HandleKeys(void)
 /**
  * @brief  更新 HUB12 点阵屏显示内容
  *
- * 显示布局 (P10 屏 16 像素高, 分 3 行):
- *   第 0 行 (y=0~5):  温度 + 湿度
- *   第 1 行 (y=6~11): 运行模式 + 风扇状态
- *   第 2 行 (y=12~15): 当前温度阈值
+ * P10 屏 32 像素宽, 每字符 6 像素 (5px 字模 + 1px 间距), 每行最多 5 字符。
+ * 显示布局 (3 行, 每行 6 像素高):
+ *   第 0 行 (y=0~5):   温度 (含 1 位小数)
+ *   第 1 行 (y=6~11):  湿度 (整数, 带 H: 前缀)
+ *   第 2 行 (y=12~15): 温度阈值 (带 S: 前缀, S=Setpoint)
+ *
+ * 示例:         离线:          启动:
+ *   28.5          - -           TEMP
+ *   65%          OFFLN          V2.0
+ *   S:30          - -           WAIT
  */
 static void UpdateDisplay(void)
 {
-    char line_buf[32];  /* 显示文本缓冲区, P10 屏每行最多 ~5 个字符 */
+    char line_buf[8];  /* 每行最多 5 字符 + '\0' */
 
     /* ---- 离线状态 ---- */
     if (!_state.slave_online) {
-        HUB12_PrintLine(0, "ERR OFFLINE");
-        HUB12_PrintLine(1, "CHECK SLAVE");
-        HUB12_PrintLine(2, "");
+        HUB12_PrintLine(0, "  - -");
+        HUB12_PrintLine(1, "OFFLN");
+        HUB12_PrintLine(2, "  - -");
         return;
     }
 
-    /* ---- 第 0 行: 温度 + 湿度 ---- */
-    snprintf(line_buf, sizeof(line_buf), "T:%.1fC H:%.0f%%",
-             _state.temperature, _state.humidity);
+    /* ---- 第 0 行: 温度 (如 "28.5", "-1.2", "105") ---- */
+    snprintf(line_buf, sizeof(line_buf), "%.1f", _state.temperature);
     HUB12_PrintLine(0, line_buf);
 
-    /* ---- 第 1 行: 模式 + 风扇状态 ---- */
-    snprintf(line_buf, sizeof(line_buf), "%s FAN:%s",
-             (_state.mode == MODE_AUTO) ? "AUTO" : "MANU",
-             _state.fan_on ? "ON" : "OFF");
+    /* ---- 第 1 行: 湿度 (如 " 65%", "100%") ---- */
+    snprintf(line_buf, sizeof(line_buf), " %d%%", (int)_state.humidity);
     HUB12_PrintLine(1, line_buf);
 
-    /* ---- 第 2 行: 温度阈值 ---- */
-    snprintf(line_buf, sizeof(line_buf), "THR:%dC", _state.threshold);
+    /* ---- 第 2 行: 阈值 (如 "S:30", "S:20") ---- */
+    snprintf(line_buf, sizeof(line_buf), "S:%d", _state.threshold);
     HUB12_PrintLine(2, line_buf);
 }
 
@@ -319,10 +322,10 @@ void App_Master_Init(void)
     SX1278_SetRxCallback(OnRxFrame);
     SX1278_StartRx();
 
-    /* ---- 5. 初始显示 ---- */
-    HUB12_PrintLine(0, "TEMP CTRL");
+    /* ---- 5. 初始显示 (每行 5 字符, 32px 屏宽限制) ---- */
+    HUB12_PrintLine(0, "TEMP");
     HUB12_PrintLine(1, "V2.0");
-    HUB12_PrintLine(2, "WAIT...");
+    HUB12_PrintLine(2, "WAIT");
 }
 
 void App_Master_Loop(void)
