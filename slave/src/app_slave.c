@@ -10,26 +10,32 @@
  *      - 发送 DS18B20 温度转换命令 (非阻塞)
  *      - 等待 750ms (12 位精度转换时间)
  *      - 读取 DS18B20 温度值
- *      - 读取 DHT22 湿度值
  *
- *   2. 自动温控
+ *   2. 烟雾检测 (每 500ms)
+ *      - 读取 MQ-2 烟雾传感器状态
+ *      - 当烟感功能开启且检测到烟雾时, 自动开启风扇报警
+ *
+ *   3. 自动温控
  *      - 仅在 MODE_AUTO 模式下生效
  *      - 温度 >= 阈值 → 开风扇
  *      - 温度 <= 阈值 - 1°C → 关风扇 (回差控制, 防止频繁切换)
  *
- *   3. LoRa 数据上报 (每 3000ms)
+ *   4. LoRa 数据上报 (每 3000ms)
  *      - 打包传感器数据为协议帧
  *      - 通过 SX1278 发送
  *
- *   4. LoRa 指令接收 (中断驱动)
+ *   5. LoRa 指令接收 (中断驱动)
  *      - CMD_FAN_CONTROL:  开/关风扇 (进入手动模式)
  *      - CMD_SET_THRESHOLD: 修改温度阈值
  *      - CMD_SET_MODE:      切换自动/手动模式
+ *      - CMD_SET_SMOKE_EN:  设置烟感功能开关
+ *
+ * v3.0 更新: 删除 DHT22, 增加 MQ-2 烟雾传感器
  */
 
 #include "app_slave.h"
 #include "ds18b20.h"
-#include "dht22.h"
+#include "mq2.h"
 #include "relay.h"
 #include "sx1278.h"
 #include "protocol.h"
@@ -102,6 +108,9 @@ static void SysTick_Init(void)
  *   - CMD_FAN_CONTROL (0x01): data[0]=0x01→开, 0x00→关
  *   - CMD_SET_THRESHOLD (0x02): data[0]=阈值 (20~50)
  *   - CMD_SET_MODE (0x03): data[0]=0x01→自动, 0x00→手动
+ *   - CMD_SET_SMOKE_EN (0x04): data[0]=0x01→开启烟感, 0x00→关闭烟感
+ *
+ * v3.0 更新: 增加 CMD_SET_SMOKE_EN 处理
  */
 static void OnRxFrame(uint8_t *data, uint8_t len, int16_t rssi)
 {
@@ -155,6 +164,17 @@ static void OnRxFrame(uint8_t *data, uint8_t len, int16_t rssi)
                 _state.mode = frame.data[0] ? MODE_AUTO : MODE_MANUAL;
             }
             break;
+
+        case CMD_SET_SMOKE_EN:
+            /**
+             * 烟感开关指令 — 主机 KEY5 触发
+             * data[0]: 0x01=开启烟感, 0x00=关闭烟感
+             * v3.0 新增
+             */
+            if (frame.len >= 1) {
+                _state.smoke_enable = frame.data[0] ? 1 : 0;
+            }
+            break;
     }
 }
 
@@ -203,10 +223,13 @@ static void AutoFanControl(void)
  *
  * 数据格式 (7 字节):
  *   [0~1] temperature_x10 (大端序)
- *   [2~3] humidity_x10    (大端序)
+ *   [2]   smoke_enable (烟感功能开关)
+ *   [3]   smoke_status (烟感状态)
  *   [4]   fan_status
  *   [5]   mode
  *   [6]   threshold
+ *
+ * v3.0 更新: 删除湿度字段, 增加烟感字段
  */
 static void ReportSensorData(void)
 {
@@ -215,8 +238,9 @@ static void ReportSensorData(void)
     /* 温度 × 10 转整数 (如 28.5°C → 285) */
     sdata.temperature_x10 = (uint16_t)(_state.temperature * 10);
 
-    /* 湿度 × 10 转整数 (如 65.2% → 652) */
-    sdata.humidity_x10    = (uint16_t)(_state.humidity * 10);
+    /* 烟感功能开关和状态 */
+    sdata.smoke_enable = _state.smoke_enable;
+    sdata.smoke_status = _state.smoke_status;
 
     sdata.fan_status = _state.fan_on;
     sdata.mode       = _state.mode;
@@ -235,9 +259,10 @@ void App_Slave_Init(void)
 {
     /* ---- 1. 状态初始化 ---- */
     _state.temperature      = 0;
-    _state.humidity         = 0;
-    _state.fan_on           = 0;               /* 风扇默认关闭 */
-    _state.mode             = MODE_AUTO;       /* 默认自动模式 */
+    _state.smoke_enable     = 1;              /* 烟感功能默认开启 */
+    _state.smoke_status     = 0;              /* 初始状态正常 */
+    _state.fan_on           = 0;              /* 风扇默认关闭 */
+    _state.mode             = MODE_AUTO;      /* 默认自动模式 */
     _state.threshold        = DEFAULT_THRESHOLD;  /* 默认 30°C */
     _state.last_report_tick = 0;
 
@@ -246,7 +271,7 @@ void App_Slave_Init(void)
 
     /* ---- 3. 外设初始化 ---- */
     DS18B20_Init();   /* 温度传感器 (PA0, 单总线) */
-    DHT22_Init();     /* 温湿度传感器 (PA1, 单总线) */
+    MQ2_Init();       /* 烟雾传感器 (PA1, 数字输入) */
     Relay_Init();     /* 继电器 (PB1, 默认关闭) */
 
     /* ---- 4. LoRa 初始化 ---- */
@@ -285,9 +310,10 @@ void App_Slave_Loop(void)
 
     /* 静态变量 — 保持上次执行状态 */
     static uint32_t last_sensor_tick = 0;
+    static uint32_t last_smoke_tick = 0;
     static uint8_t  ds18b20_converting = 0;
 
-    /* ==================== 传感器读取 ==================== */
+    /* ==================== 温度读取 ==================== */
 
     /**
      * DS18B20 温度读取流程 (非阻塞方式):
@@ -295,9 +321,8 @@ void App_Slave_Loop(void)
      *   2. 标记正在转换 (ds18b20_converting = 1)
      *   3. 等待 750ms (转换时间)
      *   4. 读取温度值
-     *   5. 同时读取 DHT22 湿度
-     *   6. 执行自动温控
-     *   7. 清除转换标记
+     *   5. 执行自动温控
+     *   6. 清除转换标记
      */
 
     /* 步骤 1~2: 发起转换 */
@@ -307,21 +332,36 @@ void App_Slave_Loop(void)
         last_sensor_tick = now;
     }
 
-    /* 步骤 3~7: 等待转换完成并读取 */
+    /* 步骤 3~6: 等待转换完成并读取 */
     if (ds18b20_converting && (now - last_sensor_tick >= 750)) {
         /* 读取 DS18B20 温度 */
         _state.temperature = DS18B20_ReadTemp();
-
-        /* 读取 DHT22 湿度 (DHT22 同时也有温度, 但以 DS18B20 为主) */
-        DHT22_Data_t dht;
-        if (DHT22_Read(&dht)) {
-            _state.humidity = dht.humidity;
-        }
 
         ds18b20_converting = 0;
 
         /* 执行自动温控判断 */
         AutoFanControl();
+    }
+
+    /* ==================== 烟雾检测 ==================== */
+
+    /**
+     * MQ-2 烟雾传感器读取 (每 500ms):
+     *   1. 读取烟雾传感器状态
+     *   2. 如果烟感功能开启且检测到烟雾, 自动开启风扇报警
+     */
+    if (now - last_smoke_tick >= 500) {
+        _state.smoke_status = MQ2_ReadStatus();
+
+        /* 如果烟感功能开启且检测到烟雾, 自动开风扇 */
+        if (_state.smoke_enable && _state.smoke_status) {
+            if (!_state.fan_on) {
+                Relay_On();
+                _state.fan_on = 1;
+            }
+        }
+
+        last_smoke_tick = now;
     }
 
     /* ==================== 数据上报 ==================== */

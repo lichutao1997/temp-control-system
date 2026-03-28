@@ -1,6 +1,6 @@
 /**
  * @file    key.h
- * @brief   4 路按键扫描驱动 (内部上拉, 低电平有效)
+ * @brief   5 路按键扫描驱动 (内部上拉, 低电平有效)
  *
  * 按键硬件:
  *   6×6 轻触开关, 一端接 GPIO, 另一端接 GND。
@@ -11,9 +11,12 @@
  *   KEY2 (PA8):  切换自动/手动模式
  *   KEY3 (PB11): 温度阈值 +1°C (上限 50°C)
  *   KEY4 (PB10): 温度阈值 -1°C (下限 20°C)
+ *   KEY5 (PB9):  烟感功能开关 — 切换烟感检测开启/关闭
  *
  * 注意: PC13 在 STM32F103C8T6 上没有内部上拉,
  *       建议外加 10kΩ 上拉电阻到 3.3V。
+ *
+ * v3.0 更新: 增加 KEY5 用于控制烟感功能开关
  */
 
 #ifndef KEY_H
@@ -31,6 +34,8 @@
 #define KEY3_PIN    GPIO_Pin_11 /**< KEY3 引脚 — 阈值 +1°C */
 #define KEY4_PORT   GPIOB       /**< KEY4 端口 */
 #define KEY4_PIN    GPIO_Pin_10 /**< KEY4 引脚 — 阈值 -1°C */
+#define KEY5_PORT   GPIOB       /**< KEY5 端口 */
+#define KEY5_PIN    GPIO_Pin_9  /**< KEY5 引脚 — 烟感开关 */
 
 /* ======================== 按键编号 ======================== */
 
@@ -38,6 +43,7 @@
 #define KEY_2       1   /**< KEY2 编号 */
 #define KEY_3       2   /**< KEY3 编号 */
 #define KEY_4       3   /**< KEY4 编号 */
+#define KEY_5       4   /**< KEY5 编号 */
 #define KEY_NONE    0xFF /**< 无按键 */
 
 /* ======================== 时间参数 ======================== */
@@ -53,13 +59,15 @@
 /**
  * @brief  初始化所有按键 GPIO — 内部上拉输入
  *
- * 配置 PC13, PA8, PB11, PB10 为输入上拉模式。
+ * 配置 PC13, PA8, PB11, PB10, PB9 为输入上拉模式。
+ *
+ * v3.0 更新: 增加 KEY5 (PB9)
  */
 void Key_Init(void);
 
 /**
  * @brief  快速扫描按键 — 返回当前按下的按键编号
- * @retval KEY_1~KEY_4, 无按键返回 KEY_NONE
+ * @retval KEY_1~KEY_5, 无按键返回 KEY_NONE
  * @note   不带消抖, 适合需要快速响应的场景
  */
 uint8_t Key_Scan(void);
@@ -73,7 +81,7 @@ uint8_t Key_Scan(void);
  *   - 只返回按下事件 (一次按键只返回一次)
  *   - 释放事件仅更新内部状态, 不返回
  *
- * @retval 按下的按键编号 KEY_1~KEY_4, 无事件返回 KEY_NONE
+ * @retval 按下的按键编号 KEY_1~KEY_5, 无事件返回 KEY_NONE
  */
 uint8_t Key_GetEvent(void);
 

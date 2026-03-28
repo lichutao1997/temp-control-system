@@ -1,10 +1,10 @@
 /**
  * @file    key.c
- * @brief   按键驱动实现 (4 个按键, 消抖处理)
+ * @brief   按键驱动实现 (5 个按键, 消抖处理)
  *
  * ===================== 按键硬件说明 =====================
  *
- * 4 个轻触按键, 一端接 GPIO, 另一端接 GND。
+ * 5 个轻触按键, 一端接 GPIO, 另一端接 GND。
  * GPIO 配置为内部上拉输入, 按下时读到低电平。
  *
  * 按键分配:
@@ -12,6 +12,7 @@
  *   KEY2 (PA8):  切换自动/手动模式
  *   KEY3 (PB11): 温度阈值 +1°C
  *   KEY4 (PB10): 温度阈值 -1°C
+ *   KEY5 (PB9):  烟感开关
  *
  * 消抖算法:
  *   每次检测到电平变化时, 记录时间戳。
@@ -20,7 +21,9 @@
  *
  * 注意:
  *   PC13 在 STM32F103 上没有内部上拉电阻, 建议外加 10kΩ 上拉。
- *   PA8、PB10、PB11 有内部上拉, 可直接使用。
+ *   PA8、PB9、PB10、PB11 有内部上拉, 可直接使用。
+ *
+ * v3.0 更新: 增加 KEY5 (PB9) 烟感开关
  */
 
 #include "key.h"
@@ -33,13 +36,14 @@ typedef struct {
 } KeyPin_t;
 
 /**
- * @brief 按键引脚映射表 — 索引对应 KEY_1~KEY_4
+ * @brief 按键引脚映射表 — 索引对应 KEY_1~KEY_5
  */
 static const KeyPin_t key_pins[] = {
     {KEY1_PORT, KEY1_PIN},   /* KEY_1 = 0: PC13 */
     {KEY2_PORT, KEY2_PIN},   /* KEY_2 = 1: PA8  */
     {KEY3_PORT, KEY3_PIN},   /* KEY_3 = 2: PB11 */
     {KEY4_PORT, KEY4_PIN},   /* KEY_4 = 3: PB10 */
+    {KEY5_PORT, KEY5_PIN},   /* KEY_5 = 4: PB9  */
 };
 
 /** @brief 按键数量 */
@@ -48,13 +52,13 @@ static const KeyPin_t key_pins[] = {
 /* ======================== 消抖状态 ======================== */
 
 /** @brief 按键当前确认状态: 1=按下, 0=释放 */
-static uint8_t _key_state[4] = {0};
+static uint8_t _key_state[5] = {0};
 
 /** @brief 按键上一次采样状态 (用于检测变化) */
-static uint8_t _key_prev[4] = {0};
+static uint8_t _key_prev[5] = {0};
 
 /** @brief 按键状态变化时的时间戳 (用于消抖计时) */
-static uint32_t _key_debounce[4] = {0};
+static uint32_t _key_debounce[5] = {0};
 
 /* ======================== 辅助函数 ======================== */
 

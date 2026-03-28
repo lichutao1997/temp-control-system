@@ -44,6 +44,7 @@
 #define CMD_FAN_CONTROL     0x01    /**< 风扇控制 — data[0]: 0x01=开, 0x00=关 */
 #define CMD_SET_THRESHOLD   0x02    /**< 设置阈值 — data[0]: 温度值 20~50 (°C) */
 #define CMD_SET_MODE        0x03    /**< 设置模式 — data[0]: 0x01=自动, 0x00=手动 */
+#define CMD_SET_SMOKE_EN    0x04    /**< 设置烟感开关 — data[0]: 0x01=开启, 0x00=关闭 */
 #define RPT_SENSOR_DATA     0x11    /**< 从机上报数据 — 7 字节 (见 SensorData_t) */
 
 /* ======================== 数据结构 ======================== */
@@ -71,14 +72,17 @@ typedef struct {
  * @brief 传感器上报数据结构 — RPT_SENSOR_DATA (0x11) 的数据域
  *
  * 数据域 7 字节, 大端序存储多字节整数。
- * 温度/湿度以 ×10 存储, 避免浮点传输。
+ * 温度以 ×10 存储, 避免浮点传输。
  *
  * 示例: temperature_x10 = 285 → 实际温度 = 28.5°C
+ *
+ * v3.0 更新: 删除湿度字段, 增加烟感状态字段
  */
 #pragma pack(push, 1)
 typedef struct {
     uint16_t temperature_x10;       /**< 温度 × 10 (大端序) */
-    uint16_t humidity_x10;          /**< 湿度 × 10 (大端序) */
+    uint8_t  smoke_enable;          /**< 烟感功能开关: 0x01=开启, 0x00=关闭 */
+    uint8_t  smoke_status;          /**< 烟感状态: 0x01=检测到烟雾, 0x00=正常 */
     uint8_t  fan_status;            /**< 风扇状态: 0x01=开, 0x00=关 */
     uint8_t  mode;                  /**< 运行模式: 0x01=自动, 0x00=手动 */
     uint8_t  threshold;             /**< 温度阈值 (20~50) */

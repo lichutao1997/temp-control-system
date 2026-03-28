@@ -3,14 +3,16 @@
  * @brief   主机应用层逻辑实现
  *
  * 本模块实现值班室主机的核心功能:
- *   1. 按键扫描 — 4 个按键的消抖检测与事件分发
+ *   1. 按键扫描 — 5 个按键的消抖检测与事件分发
  *   2. LoRa 通信 — 接收从机数据、发送控制指令
- *   3. 界面显示 — 在 HUB12 点阵屏上显示温湿度、模式、状态
+ *   3. 界面显示 — 在 HUB12 点阵屏上显示温度、模式、烟感状态
  *   4. 离线检测 — 10 秒无数据则标记从机离线
  *
  * 主循环调用流程:
  *   main() → App_Master_Init() → while(1) App_Master_Loop()
  *   App_Master_Loop() 内部按时间间隔分发各子任务
+ *
+ * v3.0 更新: 删除湿度显示, 增加烟感状态, 级联双屏显示布局调整
  */
 
 #include "app_master.h"
@@ -110,18 +112,22 @@ static void OnRxFrame(uint8_t *data, uint8_t len, int16_t rssi)
         /**
          * RPT_SENSOR_DATA 数据布局 (7 字节):
          *   [0~1] temperature_x10 — 温度 × 10, 大端序
-         *   [2~3] humidity_x10    — 湿度 × 10, 大端序
-         *   [4]   fan_status      — 0x01=开, 0x00=关
-         *   [5]   mode            — 0x01=自动, 0x00=手动
-         *   [6]   threshold       — 温度阈值 (20~50)
+         *   [2]   smoke_enable     — 烟感开关: 0x01=开启, 0x00=关闭
+         *   [3]   smoke_status     — 烟感状态: 0x01=检测到烟雾, 0x00=正常
+         *   [4]   fan_status       — 0x01=开, 0x00=关
+         *   [5]   mode             — 0x01=自动, 0x00=手动
+         *   [6]   threshold        — 温度阈值 (20~50)
+         *
+         * v3.0 更新: 删除湿度, 增加烟感字段
          */
         SensorData_t *sd = (SensorData_t *)&frame.data[0];
 
-        _state.temperature = (float)sd->temperature_x10 / 10.0f;
-        _state.humidity    = (float)sd->humidity_x10 / 10.0f;
-        _state.fan_on      = sd->fan_status;
-        _state.mode        = sd->mode;
-        _state.threshold   = sd->threshold;
+        _state.temperature  = (float)sd->temperature_x10 / 10.0f;
+        _state.smoke_enable = sd->smoke_enable;
+        _state.smoke_status = sd->smoke_status;
+        _state.fan_on       = sd->fan_status;
+        _state.mode         = sd->mode;
+        _state.threshold    = sd->threshold;
         _state.slave_online = 1;
         _state.last_rx_tick = GetTick();
     }
@@ -171,6 +177,22 @@ static void SendSetThreshold(uint8_t threshold)
     }
 }
 
+/**
+ * @brief  发送烟感开关指令到从机
+ * @param  enable: 1=开启烟感检测, 0=关闭烟感检测
+ *
+ * v3.0 新增
+ */
+static void SendSetSmokeEnable(uint8_t enable)
+{
+    uint8_t data = enable ? 0x01 : 0x00;
+    uint8_t len = protocol_pack(_tx_buf, DEV_ID_MASTER, DEV_ID_SLAVE,
+                                CMD_SET_SMOKE_EN, &data, 1);
+    if (len > 0) {
+        SX1278_Send(_tx_buf, len);
+    }
+}
+
 /* ======================== 按键处理 ======================== */
 
 /**
@@ -181,6 +203,9 @@ static void SendSetThreshold(uint8_t threshold)
  *   KEY2 (PA8):  切换自动/手动模式
  *   KEY3 (PB11): 温度阈值 +1°C (上限 50°C)
  *   KEY4 (PB10): 温度阈值 -1°C (下限 20°C)
+ *   KEY5 (PB9):  烟感开关 — 切换烟感检测开启/关闭
+ *
+ * v3.0 更新: 增加 KEY5 处理 (烟感开关)
  */
 static void HandleKeys(void)
 {
@@ -234,6 +259,14 @@ static void HandleKeys(void)
                 SendSetThreshold(_state.threshold);
             }
             break;
+
+        case KEY_5:
+            /**
+             * KEY5: 烟感开关 — 切换烟感检测开启/关闭
+             * v3.0 新增
+             */
+            SendSetSmokeEnable(!_state.smoke_enable);
+            break;
     }
 }
 
@@ -242,39 +275,56 @@ static void HandleKeys(void)
 /**
  * @brief  更新 HUB12 点阵屏显示内容
  *
- * P10 屏 32 像素宽, 每字符 6 像素 (5px 字模 + 1px 间距), 每行最多 5 字符。
+ * 级联双 P10 屏 64 像素宽, 每字符 6 像素 (5px 字模 + 1px 间距), 每行最多 10 字符。
  * 显示布局 (3 行, 每行 6 像素高):
- *   第 0 行 (y=0~5):   温度 (含 1 位小数)
- *   第 1 行 (y=6~11):  湿度 (整数, 带 H: 前缀)
- *   第 2 行 (y=12~15): 温度阈值 (带 S: 前缀, S=Setpoint)
+ *   第 0 行 (y=0~5):   1# + 模式 (AUTO/MANU)
+ *   第 1 行 (y=6~11):  当前温度 + 阈值 (如 "28.5C S:30C")
+ *   第 2 行 (y=12~15): 风扇状态 + 烟感状态 (如 "F:ON  S:ON")
  *
- * 示例:         离线:          启动:
- *   28.5          - -           TEMP
- *   65%          OFFLN          V2.0
- *   S:30          - -           WAIT
+ * v3.0 更新: 级联双屏布局, 删除湿度, 增加烟感状态显示
+ *
+ * 示例:
+ *   1#AUTO          (在线, 自动模式)
+ *   28.5C S:30C    (温度 28.5°C, 阈值 30°C)
+ *   F:ON  S:ON     (风扇开, 烟感开)
+ *
+ *   1#MANU          (在线, 手动模式)
+ *   25.0C S:25C    (温度 25.0°C, 阈值 25°C)
+ *   F:OF  S:ALM    (风扇关, 烟雾报警)
+ *
+ *   1#----          (离线状态)
+ *   -  --           (无数据)
+ *   OFFLINE         (离线提示)
+ *
+ * 烟感状态: F:ON/OF(风扇)  S:ON/OF/ALM(烟感开/关/报警)
  */
 static void UpdateDisplay(void)
 {
-    char line_buf[8];  /* 每行最多 5 字符 + '\0' */
+    char line_buf[16];  /* 每行最多 10 字符 + '\0' */
 
     /* ---- 离线状态 ---- */
     if (!_state.slave_online) {
-        HUB12_PrintLine(0, "  - -");
-        HUB12_PrintLine(1, "OFFLN");
-        HUB12_PrintLine(2, "  - -");
+        HUB12_PrintLine(0, "1#----");
+        HUB12_PrintLine(1, "-  -- ");
+        HUB12_PrintLine(2, "OFFLINE");
         return;
     }
 
-    /* ---- 第 0 行: 温度 (如 "28.5", "-1.2", "105") ---- */
-    snprintf(line_buf, sizeof(line_buf), "%.1f", _state.temperature);
-    HUB12_PrintLine(0, line_buf);
+    /* ---- 第 0 行: 单元号 + 模式 (如 "1#AUTO", "1#MANU") ---- */
+    if (_state.mode == MODE_AUTO) {
+        HUB12_PrintLine(0, "1#AUTO");
+    } else {
+        HUB12_PrintLine(0, "1#MANU");
+    }
 
-    /* ---- 第 1 行: 湿度 (如 " 65%", "100%") ---- */
-    snprintf(line_buf, sizeof(line_buf), " %d%%", (int)_state.humidity);
+    /* ---- 第 1 行: 温度 + 阈值 (如 "28.5C S:30C") ---- */
+    snprintf(line_buf, sizeof(line_buf), "%.1fC S:%dC", _state.temperature, _state.threshold);
     HUB12_PrintLine(1, line_buf);
 
-    /* ---- 第 2 行: 阈值 (如 "S:30", "S:20") ---- */
-    snprintf(line_buf, sizeof(line_buf), "S:%d", _state.threshold);
+    /* ---- 第 2 行: 风扇状态 + 烟感状态 (如 "F:ON S:ON") ---- */
+    snprintf(line_buf, sizeof(line_buf), "F:%s  S:%s",
+             _state.fan_on ? "ON" : "OF",
+             _state.smoke_enable ? (_state.smoke_status ? "ALM" : "ON") : "OF");
     HUB12_PrintLine(2, line_buf);
 }
 
@@ -322,10 +372,10 @@ void App_Master_Init(void)
     SX1278_SetRxCallback(OnRxFrame);
     SX1278_StartRx();
 
-    /* ---- 5. 初始显示 (每行 5 字符, 32px 屏宽限制) ---- */
-    HUB12_PrintLine(0, "TEMP");
-    HUB12_PrintLine(1, "V2.0");
-    HUB12_PrintLine(2, "WAIT");
+    /* ---- 5. 初始显示 (级联双屏, 每行 10 字符, 64px 屏宽) ---- */
+    HUB12_PrintLine(0, "1# 温控");
+    HUB12_PrintLine(1, "V3.0");
+    HUB12_PrintLine(2, "初始化...");
 }
 
 void App_Master_Loop(void)
